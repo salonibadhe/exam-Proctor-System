@@ -1,0 +1,97 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Educational Blue Theme */
+  --primary: 215 85% 55%; /* Vibrant educational blue */
+  --primary-foreground: 0 0% 100%;
+  
+  --secondary: 215 20% 93%;
+  --secondary-foreground: 215 85% 20%;
+  
+  --accent: 142 76% 36%; /* Success green */
+  --accent-foreground: 0 0% 100%;
+  
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  
+  --background: 0 0% 100%;
+  --foreground: 222 47% 11%;
+  
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+  
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
+  
+  --muted: 215 20% 95%;
+  --muted-foreground: 215 15% 40%;
+  
+  --border: 215 20% 90%;
+  --input: 215 20% 88%;
+  --ring: 215 85% 55%;
+  
+  --radius: 0.5rem;
+  
+  /* Sidebar */
+  --sidebar-background: 0 0% 100%;
+  --sidebar-foreground: 222 47% 11%;
+  --sidebar-primary: 215 85% 55%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 215 20% 93%;
+  --sidebar-accent-foreground: 215 85% 20%;
+  --sidebar-border: 215 20% 90%;
+  --sidebar-ring: 215 85% 55%;
+}
+
+.dark {
+  --primary: 215 85% 60%;
+  --primary-foreground: 0 0% 100%;
+  
+  --secondary: 215 20% 15%;
+  --secondary-foreground: 215 20% 90%;
+  
+  --accent: 142 76% 36%;
+  --accent-foreground: 0 0% 100%;
+  
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  
+  --background: 222 47% 11%;
+  --foreground: 0 0% 95%;
+  
+  --card: 215 20% 13%;
+  --card-foreground: 0 0% 95%;
+  
+  --popover: 215 20% 13%;
+  --popover-foreground: 0 0% 95%;
+  
+  --muted: 215 20% 20%;
+  --muted-foreground: 215 20% 65%;
+  
+  --border: 215 20% 25%;
+  --input: 215 20% 25%;
+  --ring: 215 85% 60%;
+  
+  /* Sidebar */
+  --sidebar-background: 215 20% 13%;
+  --sidebar-foreground: 0 0% 95%;
+  --sidebar-primary: 215 85% 60%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 215 20% 20%;
+  --sidebar-accent-foreground: 215 20% 90%;
+  --sidebar-border: 215 20% 25%;
+  --sidebar-ring: 215 85% 60%;
+}
+
+* {
+  @apply border-border;
+}
+
+body {
+  @apply bg-background text-foreground;
+  font-family: 'Inter', sans-serif;
+}
