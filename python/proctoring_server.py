@@ -52,6 +52,38 @@ _options = FaceDetectorOptions(
 )
 _detector = FaceDetector.create_from_options(_options)
 
+from mediapipe.tasks.python.vision import ImageEmbedder, ImageEmbedderOptions, FaceLandmarker, FaceLandmarkerOptions
+
+# ─── Build the ImageEmbedder (Used for face matching) ──────────────────────
+EMBEDDER_MODEL_PATH = os.path.join(os.path.dirname(__file__), "mobilenet_v3_small.tflite")
+EMBEDDER_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/image_embedder/mobilenet_v3_small/float32/1/mobilenet_v3_small.tflite"
+
+if not os.path.exists(EMBEDDER_MODEL_PATH):
+    print(f"Downloading image embedder model to {EMBEDDER_MODEL_PATH} ...")
+    urllib.request.urlretrieve(EMBEDDER_MODEL_URL, EMBEDDER_MODEL_PATH)
+    print("Model downloaded successfully.")
+
+_embedder_options = ImageEmbedderOptions(
+    base_options=mp_python.BaseOptions(model_asset_path=EMBEDDER_MODEL_PATH),
+    running_mode=RunningMode.IMAGE,
+)
+_embedder = ImageEmbedder.create_from_options(_embedder_options)
+
+# ─── Build the FaceLandmarker (Used for geometric proportions) ─────────────
+LANDMARKER_MODEL_PATH = os.path.join(os.path.dirname(__file__), "face_landmarker.task")
+LANDMARKER_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+
+if not os.path.exists(LANDMARKER_MODEL_PATH):
+    print(f"Downloading face landmarker model to {LANDMARKER_MODEL_PATH} ...")
+    urllib.request.urlretrieve(LANDMARKER_MODEL_URL, LANDMARKER_MODEL_PATH)
+    print("Model downloaded successfully.")
+
+_landmarker_options = FaceLandmarkerOptions(
+    base_options=mp_python.BaseOptions(model_asset_path=LANDMARKER_MODEL_PATH),
+    running_mode=RunningMode.IMAGE,
+)
+_landmarker = FaceLandmarker.create_from_options(_landmarker_options)
+
 _face_cascade = cv2.CascadeClassifier(
     os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")
 )
@@ -62,11 +94,13 @@ _face_cascade = cv2.CascadeClassifier(
 class FramePayload(BaseModel):
     # Base64-encoded JPEG or PNG frame (data URL or raw base64)
     frame: str
+    reference_image: str = None  # Optional signup photo for identity verification
 
 class AnalysisResult(BaseModel):
     face_count: int
-    status: str   # "ok" | "no_face" | "multiple_faces" | "error"
+    status: str   # "ok" | "no_face" | "multiple_faces" | "face_mismatch" | "error"
     message: str
+    similarity: float = 0.0
 
     model_config = {"populate_by_name": True}
 
@@ -90,15 +124,13 @@ class CodeAnalysisResult(BaseModel):
 
 @app.get("/health")
 def health_check():
+    print("DEBUG: Health check received from frontend")
     return {"status": "ok", "server": "Exam Proctoring Server"}
 
 
 @app.post("/analyze", response_model=AnalysisResult)
 def analyze_frame(payload: FramePayload):
-    """
-    Analyze a webcam frame for face presence.
-    Accepts a base64-encoded image (with or without the data-URL prefix).
-    """
+    print(f"DEBUG: Frame received for analysis. Ref image present: {bool(payload.reference_image)}")
     try:
         if not payload.frame:
             return AnalysisResult(face_count=0, status="error", message="Empty frame payload")
@@ -138,12 +170,131 @@ def analyze_frame(payload: FramePayload):
             face_count = len(faces)
 
         if face_count == 0:
+            print(f"RESULT: no_face")
             return AnalysisResult(face_count=0, status="no_face", message="No face detected in the frame")
-        elif face_count == 1:
-            return AnalysisResult(face_count=1, status="ok", message="Face detected — student present")
-        else:
+        elif face_count > 1:
+            print(f"RESULT: multiple_faces ({face_count})")
             return AnalysisResult(face_count=face_count, status="multiple_faces",
                                   message=f"{face_count} faces detected in the frame")
+
+        # Exactly 1 face detected, now check identity if reference_image is provided
+        if payload.reference_image:
+            try:
+                # Decode reference image
+                ref_b64 = payload.reference_image
+                if "," in ref_b64:
+                    ref_b64 = ref_b64.split(",", 1)[1]
+                ref_bytes = base64.b64decode(ref_b64)
+                ref_np = np.frombuffer(ref_bytes, dtype=np.uint8)
+                ref_bgr = cv2.imdecode(ref_np, cv2.IMREAD_COLOR)
+                
+                if ref_bgr is not None:
+                    print(f"DEBUG: Reference image received and decoded. Shape: {ref_bgr.shape}")
+                    ref_rgb = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2RGB)
+                    mp_ref_image_full = mp.Image(image_format=mp.ImageFormat.SRGB, data=ref_rgb)
+                    
+                    # Detect face in reference image to get a crop (much better for matching)
+                    ref_detect_result = _detector.detect(mp_ref_image_full)
+                    if ref_detect_result.detections:
+                        ref_bbox = ref_detect_result.detections[0].bounding_box
+                        rh, rw, _ = ref_bgr.shape
+                        rx1 = max(0, int(ref_bbox.origin_x))
+                        ry1 = max(0, int(ref_bbox.origin_y))
+                        rx2 = min(rw, rx1 + int(ref_bbox.width))
+                        ry2 = min(rh, ry1 + int(ref_bbox.height))
+                        ref_face_crop_bgr = ref_bgr[ry1:ry2, rx1:rx2]
+                        ref_face_crop_rgb = cv2.cvtColor(ref_face_crop_bgr, cv2.COLOR_BGR2RGB)
+                        mp_ref_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=ref_face_crop_rgb)
+                        print(f"DEBUG: Reference face cropped. Shape: {ref_face_crop_bgr.shape}")
+                    else:
+                        # Fallback to full image if no face detected in ref (rare)
+                        mp_ref_image = mp_ref_image_full
+                        print("DEBUG: No face detected in reference image, using full image.")
+                    
+                    # For the current frame, we have exactly 1 face. Crop it.
+                    if not result.detections:
+                         print("DEBUG: Face detected by fallback but not by MediaPipe detector. Skipping identity match.")
+                         return AnalysisResult(face_count=1, status="ok", message="Identity match skipped (detection fallback)")
+                    
+                    bbox = result.detections[0].bounding_box
+                    h, w, _ = img_bgr.shape
+                    x1 = max(0, int(bbox.origin_x))
+                    y1 = max(0, int(bbox.origin_y))
+                    x2 = min(w, x1 + int(bbox.width))
+                    y2 = min(h, y1 + int(bbox.height))
+                    
+                    face_crop_bgr = img_bgr[y1:y2, x1:x2]
+                    face_crop_rgb = cv2.cvtColor(face_crop_bgr, cv2.COLOR_BGR2RGB)
+                    mp_face_crop = mp.Image(image_format=mp.ImageFormat.SRGB, data=face_crop_rgb)
+                    print(f"DEBUG: Current frame face cropped. Shape: {face_crop_bgr.shape}")
+                    
+                    # ─── Geometric Check (Face Mesh) ───
+                    def get_face_ratio(mp_img):
+                        lm_result = _landmarker.detect(mp_img)
+                        if not lm_result.face_landmarks:
+                            return None
+                        lms = lm_result.face_landmarks[0]
+                        # Eye distance (centers)
+                        lex = (lms[159].x + lms[145].x) / 2
+                        ley = (lms[159].y + lms[145].y) / 2
+                        rex = (lms[386].x + lms[374].x) / 2
+                        rey = (lms[386].y + lms[374].y) / 2
+                        eye_dist = ((lex-rex)**2 + (ley-rey)**2)**0.5
+                        # Face width (edges)
+                        fw = ((lms[234].x - lms[454].x)**2 + (lms[234].y - lms[454].y)**2)**0.5
+                        return eye_dist / fw if fw > 0 else None
+
+                    ref_ratio = get_face_ratio(mp_ref_image)
+                    frame_ratio = get_face_ratio(mp_face_crop)
+                    
+                    geo_sim = 1.0
+                    if ref_ratio and frame_ratio:
+                        # Ratios are typically ~0.4. A 0.04 diff is a 10% change.
+                        diff = abs(ref_ratio - frame_ratio)
+                        geo_sim = max(0.0, 1.0 - (diff * 5.0)) # 0.1 diff -> 0.5 sim
+                        print(f"DEBUG: Geometric Ratio Diff: {diff:.4f}, Geo Sim: {geo_sim:.4f}")
+
+                    # Extract embeddings
+                    ref_result = _embedder.embed(mp_ref_image)
+                    frame_result = _embedder.embed(mp_face_crop)
+                    
+                    if ref_result.embeddings and frame_result.embeddings:
+                        embed_sim = ImageEmbedder.cosine_similarity(
+                            ref_result.embeddings[0], frame_result.embeddings[0]
+                        )
+                        
+                        # Hybrid Similarity
+                        # 70% Embedder, 30% Geometric
+                        similarity = (0.7 * embed_sim) + (0.3 * geo_sim)
+                        print(f"DEBUG: Embed Sim: {embed_sim:.4f}, Final Hybrid Similarity: {similarity:.4f}")
+                        
+                        # Tolerant Threshold (0.75) for better real-world usage
+                        MATCH_THRESHOLD = 0.75 
+                        
+                        if similarity < MATCH_THRESHOLD:
+                            return AnalysisResult(
+                                face_count=1, 
+                                status="face_mismatch", 
+                                message=f"Identity mismatch! (Confidence: {similarity:.2f})",
+                                similarity=similarity
+                            )
+                        
+                        return AnalysisResult(
+                            face_count=1, 
+                            status="ok", 
+                            message="Face matched successfully", 
+                            similarity=similarity
+                        )
+                    else:
+                        print("DEBUG: Could not generate embeddings for one of the images.")
+                else:
+                    print("DEBUG: Decoding reference image failed (None result).")
+            except Exception as embed_err:
+                print(f"DEBUG: Analysis error: {embed_err}")
+                import traceback
+                traceback.print_exc()
+        
+        return AnalysisResult(face_count=1, status="ok", message="Face detected — student present")
 
     except Exception as e:
         return AnalysisResult(face_count=-1, status="error", message=f"Analysis error: {str(e)}")

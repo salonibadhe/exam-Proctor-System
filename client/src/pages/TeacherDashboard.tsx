@@ -286,6 +286,170 @@ const TeacherDashboard = () => {
     doc.save(`Exam_Report_${selectedExam.examCode}.pdf`);
   };
 
+  const generateWholeExamReport = () => {
+    if (!selectedExam || examResults.length === 0) return;
+
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.width;
+
+    // -- Header --
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(22);
+    doc.setTextColor(79, 70, 229); // Indigo 600
+    doc.text("Whole Exam Result Report", pageWidth / 2, 20, { align: "center" });
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(12);
+    doc.setTextColor(100, 116, 139); // Slate 500
+    doc.text(`Exam Title: ${selectedExam.title}`, 14, 35);
+    doc.text(`Exam Code: ${selectedExam.examCode}`, 14, 42);
+    doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 49);
+
+    if (user?.fullName) {
+      doc.text(`Teacher: ${user.fullName}`, pageWidth - 14, 35, { align: "right" });
+    }
+
+    // -- Exam Summary Stats --
+    const totalStudents = examResults.length;
+    const passedStudents = examResults.filter(r => {
+      const total = r.totalPoints || r.totalQuestions;
+      return (r.score / total) >= 0.6;
+    }).length;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.setTextColor(15, 23, 42);
+    doc.text("Exam Summary", 14, 65);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(12);
+    doc.text(`Total Students Attended: ${totalStudents}`, 14, 75);
+    doc.text(`Total Students Passed: ${passedStudents}`, 14, 82);
+    doc.text(`Pass Percentage: ${Math.round((passedStudents / totalStudents) * 100)}%`, 14, 89);
+
+    // -- Summary Table --
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("All Student Results", 14, 105);
+
+    const summaryData = examResults.map((r, i) => {
+      const totalPoints = r.totalPoints || r.totalQuestions;
+      const percentage = Math.round((r.score / totalPoints) * 100);
+      const passed = percentage >= 60 ? "PASS" : "FAIL";
+      const totalV = (r.violations || []).reduce((sum, v) => sum + v.count, 0);
+      return [
+        i + 1,
+        r.studentId.fullName,
+        r.studentId.email,
+        `${r.score}/${totalPoints}`,
+        `${percentage}%`,
+        passed,
+        totalV > 0 ? `${totalV} Violations` : "Clean"
+      ];
+    });
+
+    autoTable(doc, {
+      startY: 110,
+      head: [["#", "Name", "Email", "Score", "Percentage", "Status", "Proctoring"]],
+      body: summaryData,
+      theme: "grid",
+      headStyles: { fillColor: [79, 70, 229] },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+    });
+
+    // -- Footer --
+    const totalPages = (doc as any).internal.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+      doc.setFontSize(10);
+      doc.setTextColor(148, 163, 184);
+      doc.text(`Page ${i} of ${totalPages}`, pageWidth / 2, doc.internal.pageSize.height - 10, { align: "center" });
+    }
+
+    doc.save(`Whole_Exam_Report_${selectedExam.examCode}.pdf`);
+  };
+
+  const generateStudentHistoryReport = async (studentId: string, studentName: string) => {
+    try {
+      const historyResults = await resultAPI.getStudentResultsByTeacher(studentId);
+
+      if (!historyResults || historyResults.length === 0) {
+        toast({
+          title: "No History",
+          description: "No past exam results found for this student.",
+        });
+        return;
+      }
+
+      const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.width;
+
+      // -- Header --
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(22);
+      doc.setTextColor(79, 70, 229);
+      doc.text("Student Exam History Report", pageWidth / 2, 20, { align: "center" });
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(12);
+      doc.setTextColor(100, 116, 139);
+      doc.text(`Student Name: ${studentName}`, 14, 35);
+      doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 42);
+
+      if (user?.fullName) {
+        doc.text(`Teacher: ${user.fullName}`, pageWidth - 14, 35, { align: "right" });
+      }
+
+      // -- Summary Table --
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(16);
+      doc.setTextColor(15, 23, 42);
+      doc.text("Exam Results Summary", 14, 60);
+
+      const summaryData = historyResults.map((r: any, i: number) => {
+        const totalPoints = r.totalPoints || r.totalQuestions;
+        const percentage = Math.round((r.score / totalPoints) * 100);
+        const passed = percentage >= 60 ? "PASS" : "FAIL";
+        const dateStr = new Date(r.submittedAt).toLocaleDateString();
+        return [
+          i + 1,
+          r.examId?.title || "Unknown Exam",
+          dateStr,
+          `${r.score}/${totalPoints}`,
+          `${percentage}%`,
+          passed
+        ];
+      });
+
+      autoTable(doc, {
+        startY: 65,
+        head: [["#", "Exam Title", "Date", "Score", "Percentage", "Status"]],
+        body: summaryData,
+        theme: "grid",
+        headStyles: { fillColor: [79, 70, 229] },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+      });
+
+      // -- Footer --
+      const totalPages = (doc as any).internal.getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        doc.setPage(i);
+        doc.setFontSize(10);
+        doc.setTextColor(148, 163, 184);
+        doc.text(`Page ${i} of ${totalPages}`, pageWidth / 2, doc.internal.pageSize.height - 10, { align: "center" });
+      }
+
+      doc.save(`Student_History_${studentName.replace(/\s+/g, '_')}.pdf`);
+    } catch (error) {
+      console.error(error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to generate student history report.",
+      });
+    }
+  };
+
   const handleCreateExam = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -790,14 +954,24 @@ const TeacherDashboard = () => {
                                 })}
                               </td>
                               <td className="p-4 text-center">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="border-indigo-200 text-indigo-700 hover:bg-indigo-50"
-                                  onClick={() => handleViewCode(result)}
-                                >
-                                  <Code className="w-4 h-4 mr-1" /> Review
-                                </Button>
+                                <div className="flex justify-center gap-2">
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+                                    onClick={() => handleViewCode(result)}
+                                  >
+                                    <Code className="w-4 h-4 mr-1" /> Review
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="border-purple-200 text-purple-700 hover:bg-purple-50"
+                                    onClick={() => generateStudentHistoryReport(result.studentId._id, result.studentId.fullName)}
+                                  >
+                                    <Download className="w-4 h-4 mr-1" /> History
+                                  </Button>
+                                </div>
                               </td>
                             </tr>
                           );
@@ -808,13 +982,22 @@ const TeacherDashboard = () => {
               </div>
 
               {/* Export Button */}
-              <div className="flex justify-end pt-4 border-t border-indigo-100">
+              <div className="flex justify-end gap-3 pt-4 border-t border-indigo-100">
                 <Button
                   variant="outline"
-                  className="border-indigo-200 hover:bg-blue-500"
+                  className="border-indigo-200 hover:bg-indigo-50 text-indigo-700"
+                  onClick={generateWholeExamReport}
+                >
+                  <Download className="w-4 h-4 mr-2" />
+                  Export Whole Exam
+                </Button>
+                <Button
+                  variant="outline"
+                  className="bg-indigo-600 text-white hover:bg-indigo-700 hover:text-white"
                   onClick={generateReport}
                 >
-                  Export Results
+                  <FileText className="w-4 h-4 mr-2" />
+                  Export Selected Results
                 </Button>
               </div>
             </div>

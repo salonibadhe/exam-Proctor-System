@@ -151,6 +151,11 @@ export const resultAPI = {
     const response = await api.get(`/results/exam/${examId}/student/${studentId}`);
     return response.data;
   },
+
+  getStudentResultsByTeacher: async (studentId: string) => {
+    const response = await api.get(`/results/teacher/student/${studentId}`);
+    return response.data;
+  },
 };
 
 export default api;

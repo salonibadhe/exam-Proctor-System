@@ -10,26 +10,16 @@ const router = express.Router();
 
 function getExamWindow(exam) {
   const examDate = new Date(exam.examDate);
-  const examStart = new Date(examDate);
-  const examEnd = new Date(examDate.getTime() + exam.durationMinutes * 60000);
 
-  const isMidnightUtc =
-    examDate.getUTCHours() === 0 &&
-    examDate.getUTCMinutes() === 0 &&
-    examDate.getUTCSeconds() === 0 &&
-    examDate.getUTCMilliseconds() === 0;
+  // Set start to beginning of the day (00:00:00.000)
+  const startOfDay = new Date(examDate);
+  startOfDay.setHours(0, 0, 0, 0);
 
-  if (isMidnightUtc) {
-    const startOfDay = new Date(examDate);
-    startOfDay.setHours(0, 0, 0, 0);
+  // Set end to end of the day (23:59:59.999)
+  const endOfDay = new Date(examDate);
+  endOfDay.setHours(23, 59, 59, 999);
 
-    const endOfDay = new Date(examDate);
-    endOfDay.setHours(23, 59, 59, 999);
-
-    return { examStart: startOfDay, examEnd: endOfDay, examDate };
-  }
-
-  return { examStart, examEnd, examDate };
+  return { examStart: startOfDay, examEnd: endOfDay, examDate };
 }
 
 // @route   POST /api/exams
@@ -135,13 +125,13 @@ router.get('/:id', protect, async (req, res) => {
 
       if (now < examStart) {
         return res.status(400).json({
-          message: `This exam is scheduled for ${examDate.toLocaleString()} and is not yet open.`
+          message: `This exam is scheduled for ${examDate.toLocaleDateString()} and is not yet open.`
         });
       }
 
       if (now > examEnd) {
         return res.status(400).json({
-          message: `This exam has already ended. It was scheduled for ${examDate.toLocaleString()} with a duration of ${exam.durationMinutes} minutes.`
+          message: `This exam has already ended. It was scheduled for ${examDate.toLocaleDateString()} with a duration of ${exam.durationMinutes} minutes.`
         });
       }
     }
@@ -180,13 +170,13 @@ router.get('/code/:code', protect, authorizeRole('student'), async (req, res) =>
 
     if (now < examStart) {
       return res.status(400).json({
-        message: `This exam is scheduled for ${examDate.toLocaleString()} and is not yet open.`
+        message: `This exam is scheduled for ${examDate.toLocaleDateString()} and is not yet open.`
       });
     }
 
     if (now > examEnd) {
       return res.status(400).json({
-        message: `This exam has already ended. It was scheduled for ${examDate.toLocaleString()} with a duration of ${exam.durationMinutes} minutes.`
+        message: `This exam has already ended. It was scheduled for ${examDate.toLocaleDateString()} with a duration of ${exam.durationMinutes} minutes.`
       });
     }
 

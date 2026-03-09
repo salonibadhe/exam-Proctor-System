@@ -211,4 +211,26 @@ router.get('/exam/:examId/student/:studentId', protect, authorizeRole('teacher')
   }
 });
 
+// @route   GET /api/results/teacher/student/:studentId
+// @desc    Get all results for a specific student across all exams taught by the current teacher
+// @access  Private/Teacher
+router.get('/teacher/student/:studentId', protect, authorizeRole('teacher'), async (req, res) => {
+  try {
+    // Find all exams taught by this teacher
+    const exams = await Exam.find({ teacherId: req.user._id });
+    const examIds = exams.map(exam => exam._id);
+
+    // Find ExamResults for this student in these exams
+    const results = await ExamResult.find({ 
+      studentId: req.params.studentId,
+      examId: { $in: examIds }
+    }).populate('examId').sort({ submittedAt: -1 });
+
+    res.json(results);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 export default router;

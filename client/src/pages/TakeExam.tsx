@@ -65,11 +65,12 @@ export type ViolationType =
   | 'copy_paste'
   | 'keyboard_shortcut'
   | 'no_face'
-  | 'multiple_faces';
+  | 'multiple_faces'
+  | 'face_mismatch';
 
 type ViolationLog = Record<ViolationType, number>;
 
-const PYTHON_SERVER = 'http://localhost:8000';
+const PYTHON_SERVER = 'http://127.0.0.1:8000';
 const FRAME_INTERVAL_MS = 5000; // Analyze a frame every 5 seconds
 const VIDEO_READY_STATE_CURRENT_DATA = 2;
 
@@ -92,6 +93,8 @@ const TakeExam = () => {
   const [useCustomInput, setUseCustomInput] = useState<Record<string, boolean>>({});
   const [submitting, setSubmitting] = useState(false);
   const [timeLeft, setTimeLeft] = useState<number>(0);
+  const [isFaceLocked, setIsFaceLocked] = useState(false);
+  const [lastMatchScore, setLastMatchScore] = useState<number | null>(null);
 
   // Violation tracking — per type
   const [violations, setViolations] = useState<ViolationLog>({
@@ -100,6 +103,7 @@ const TakeExam = () => {
     keyboard_shortcut: 0,
     no_face: 0,
     multiple_faces: 0,
+    face_mismatch: 0,
   });
 
   // Camera proctoring
@@ -111,6 +115,9 @@ const TakeExam = () => {
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [pythonServerUp, setPythonServerUp] = useState<boolean | null>(null); // null = checking
   const pythonServerUpRef = useRef<boolean | null>(null);
+  const userRef = useRef<any>(null);
+  const isFaceLockedRef = useRef(false);
+  const consecutiveMismatchesRef = useRef(0);
 
   // Use a ref for violations so interval callbacks always read the latest value
   const violationsRef = useRef<ViolationLog>(violations);
@@ -120,6 +127,7 @@ const TakeExam = () => {
     keyboard_shortcut: 0,
     no_face: 0,
     multiple_faces: 0,
+    face_mismatch: 0,
   });
 
   useEffect(() => {
@@ -169,15 +177,6 @@ const TakeExam = () => {
         audio: false,
       });
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.onloadedmetadata = () => {
-          videoRef.current?.play().catch(() => {
-            setCameraError('Unable to start camera preview.');
-            setCameraActive(false);
-          });
-        };
-      }
       setCameraActive(true);
       setCameraError(null);
     } catch (err: any) {
@@ -217,7 +216,10 @@ const TakeExam = () => {
       const response = await fetch(`${PYTHON_SERVER}/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ frame: base64Frame }),
+        body: JSON.stringify({
+          frame: base64Frame,
+          reference_image: userRef.current?.profilePhoto
+        }),
         signal: AbortSignal.timeout(4000),
       });
 
@@ -233,7 +235,34 @@ const TakeExam = () => {
       } else if (result.status === 'multiple_faces') {
         const count = result.faceCount ?? result.face_count ?? 2;
         handleViolation('multiple_faces', `Multiple faces detected (${count})! Only you should be visible.`);
-      } else if (result.status === 'error') {
+      } else if (result.status === 'face_mismatch') {
+        consecutiveMismatchesRef.current += 1;
+        console.log(`DEBUG: Consecutive Mismatches: ${consecutiveMismatchesRef.current}`);
+
+        // Only trigger lock after 3 consecutive failures (approx 15 seconds)
+        if (consecutiveMismatchesRef.current >= 3) {
+          handleViolation('face_mismatch', 'Identity mismatch! Face does not match signup photo.');
+          setIsFaceLocked(true);
+          isFaceLockedRef.current = true;
+        }
+        setLastMatchScore(result.similarity);
+      } else if (result.status === 'ok' && result.similarity !== undefined) {
+        // Reset counter on success
+        consecutiveMismatchesRef.current = 0;
+
+        // If it was locked and we get an 'ok' with good similarity, unlock
+        if (isFaceLockedRef.current && result.similarity >= 0.75) {
+          setIsFaceLocked(false);
+          isFaceLockedRef.current = false;
+          toast({
+            title: 'Identity Verified',
+            description: 'Success! You may continue the exam.',
+            className: 'bg-green-500 text-white',
+          });
+        }
+        setLastMatchScore(result.similarity);
+      }
+      else if (result.status === 'error') {
         console.error('Python Analysis Error:', result.message);
       }
     } catch (err) {
@@ -323,29 +352,41 @@ const TakeExam = () => {
   // ─── Timer ───────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (timeLeft <= 0) return;
+    if (timeLeft <= 0 || isFaceLocked) return;
     const timer = setInterval(() => {
       setTimeLeft(prev => {
-        if (prev <= 1) { handleSubmit(); return 0; }
-        return prev - 1;
+        const newVal = prev <= 1 ? 0 : prev - 1;
+        // Also persist to localStorage
+        if (examId) localStorage.setItem(`exam_timer_${examId}`, newVal.toString());
+        if (newVal === 0) handleSubmit();
+        return newVal;
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [timeLeft]);
+  }, [timeLeft, isFaceLocked, examId]);
 
   // ─── Data Fetching ───────────────────────────────────────────────────────
 
   const checkUser = async () => {
     const userData = localStorage.getItem('user');
     if (!userData) { navigate('/auth'); return; }
-    setUser(JSON.parse(userData));
+    const parsedUser = JSON.parse(userData);
+    console.log('DEBUG: Current user has profile photo:', !!parsedUser?.profilePhoto);
+    setUser(parsedUser);
+    userRef.current = parsedUser;
   };
 
   const fetchExam = async () => {
     try {
       const data = await examAPI.getById(examId!);
       setExam(data);
-      setTimeLeft(data.durationMinutes * 60);
+      // Try to load from localStorage first for persistence
+      const savedTime = localStorage.getItem(`exam_timer_${examId}`);
+      if (savedTime) {
+        setTimeLeft(parseInt(savedTime, 10));
+      } else {
+        setTimeLeft(data.durationMinutes * 60);
+      }
     } catch {
       navigate('/student/dashboard');
     }
@@ -446,6 +487,9 @@ const TakeExam = () => {
         violations: violationsList,
       });
 
+      // Clear the timer from localStorage on successful submission
+      localStorage.removeItem(`exam_timer_${examId}`);
+
       toast({
         title: 'Exam submitted!',
         description: `You scored ${result.result.score}/${result.result.totalQuestions} (${result.percentage}%)`,
@@ -487,10 +531,103 @@ const TakeExam = () => {
   }).length;
   const allAnswered = answeredCount === questions.length;
 
+  // ─── Face Lock Overlay ───────────────────────────────────────────────────
+
+  const FaceLockOverlay = () => {
+    if (!isFaceLocked) return null;
+
+    return (
+      <div className="fixed inset-0 z-[100] bg-slate-900/95 backdrop-blur-md flex items-center justify-center p-6">
+        <Card className="max-w-4xl w-full border-2 border-red-500/50 shadow-2xl shadow-red-500/10">
+          <CardHeader className="text-center pb-2">
+            <div className="mx-auto w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mb-4">
+              <AlertTriangle className="w-8 h-8 text-red-600" />
+            </div>
+            <CardTitle className="text-3xl font-bold text-red-600">Identity Verification Required</CardTitle>
+            <CardDescription className="text-lg font-medium text-slate-400">
+              Exam is paused. Please ensure you are looking at the camera.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
+              {/* Reference Image */}
+              <div className="space-y-3">
+                <p className="text-xs font-bold text-slate-500 uppercase text-center">Signup Photo</p>
+                <div className="relative aspect-square rounded-2xl overflow-hidden border-4 border-slate-700 bg-slate-800">
+                  {user?.profilePhoto ? (
+                    <img src={user.profilePhoto} alt="Reference" className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-slate-500">
+                      No signup photo found
+                    </div>
+                  )}
+                  <div className="absolute top-3 right-3 bg-indigo-600 p-2 rounded-lg shadow-lg">
+                    <CheckCircle2 className="w-5 h-5 text-white" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Live Feedback */}
+              <div className="space-y-3">
+                <p className="text-xs font-bold text-slate-500 uppercase text-center">Live Webcam Feed</p>
+                <div className="relative aspect-square rounded-2xl overflow-hidden border-4 border-red-500 ring-4 ring-red-500/20 bg-black">
+                  <video
+                    autoPlay
+                    muted
+                    playsInline
+                    className="w-full h-full object-cover grayscale-[0.5]"
+                    ref={(el) => {
+                      if (el && streamRef.current && el.srcObject !== streamRef.current) {
+                        el.srcObject = streamRef.current;
+                        el.play().catch(e => console.error("Overlay video play failed:", e));
+                      }
+                    }}
+                    style={{ transform: 'scaleX(-1)' }}
+                  />
+                  <div className="absolute inset-0 border-[16px] border-red-500/10 pointer-events-none animate-pulse" />
+                  <div className="absolute bottom-4 left-0 right-0 flex justify-center">
+                    <div className="bg-red-600 text-white px-4 py-2 rounded-full text-sm font-bold shadow-xl flex items-center gap-2">
+                      <Camera className="w-4 h-4" />
+                      Live Verifying...
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 flex flex-col items-center gap-4">
+              <div className="flex items-center gap-4 w-full max-w-md">
+                <div className="flex-1 space-y-2">
+                  <div className="flex justify-between text-sm font-bold uppercase tracking-wider text-slate-500">
+                    <span>Similarity Score</span>
+                    <span className={lastMatchScore && lastMatchScore >= 0.75 ? 'text-green-600' : 'text-red-500'}>
+                      {lastMatchScore ? Math.round(lastMatchScore * 100) : 0}%
+                    </span>
+                  </div>
+                  <div className="h-4 bg-slate-200 rounded-full overflow-hidden border border-slate-300">
+                    <div
+                      className={`h-full transition-all duration-500 ${lastMatchScore && lastMatchScore >= 0.75 ? 'bg-green-500' : 'bg-red-500'}`}
+                      style={{ width: `${(lastMatchScore || 0) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+              <p className="text-sm text-slate-500 text-center max-w-lg italic">
+                The exam will automatically resume once the similarity score reaches 75% or higher.
+                Ensure you are in a well-lit area and looking directly at the camera.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  };
+
   // ─── Render ──────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-background">
+      <FaceLockOverlay />
       {/* Header */}
       <header className="border-b bg-card shadow-sm sticky top-0 z-10">
         <div className="container mx-auto px-4 py-4">
@@ -532,7 +669,14 @@ const TakeExam = () => {
 
         <div className="relative w-44 rounded-xl overflow-hidden border-2 border-primary/40 shadow-xl bg-black">
           <video
-            ref={videoRef}
+            ref={(el) => {
+              // Maintain the videoRef for captureAndAnalyze
+              (videoRef as any).current = el;
+              if (el && streamRef.current && el.srcObject !== streamRef.current) {
+                el.srcObject = streamRef.current;
+                el.play().catch(e => console.error("PiP video play failed:", e));
+              }
+            }}
             autoPlay
             muted
             playsInline

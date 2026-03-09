@@ -68,6 +68,7 @@ router.post(
         };
 
         response.email = user.email;
+        response.profilePhoto = user.profilePhoto;
         if (role === 'teacher') {
           response.mobile = user.mobile;
         }
@@ -118,6 +119,7 @@ router.post(
         fullName: user.fullName,
         email: user.email,
         role: user.role,
+        profilePhoto: user.profilePhoto,
         token: generateToken(user._id)
       });
     } catch (error) {
@@ -240,6 +242,7 @@ router.post(
         fullName: teacher.fullName,
         mobile: teacher.mobile,
         role: teacher.role,
+        profilePhoto: teacher.profilePhoto,
         token: generateToken(teacher._id)
       });
     } catch (error) {
