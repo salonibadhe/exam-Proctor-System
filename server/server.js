@@ -7,9 +7,21 @@ import examRoutes from './routes/exams.js';
 import questionRoutes from './routes/questions.js';
 import resultRoutes from './routes/results.js';
 
-// Load env vars
-dotenv.config();
+// // Load env vars
+// dotenv.config();
 
+
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// 🔥 Try both paths (works in Windows deep paths)
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+dotenv.config({ path: path.resolve(__dirname, '.env') });
+
+// DEBUG
+console.log("Python URL:", process.env.PYTHON_API_URL);
 const app = express();
 
 // Middleware
@@ -40,13 +52,18 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 5000;
+const isVercel = Boolean(process.env.VERCEL);
 
 const startServer = async () => {
   await connectDB();
 
-  app.listen(PORT, () => {
-    console.log(`Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
-  });
+  if (!isVercel) {
+    app.listen(PORT, () => {
+      console.log(`Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
+    });
+  }
 };
 
 startServer();
+
+export default app;
