@@ -6,7 +6,36 @@ import ExamResult from '../models/ExamResult.js';
 import Response from '../models/Response.js';
 import { protect, authorizeRole } from '../middleware/auth.js';
 
+
+
+// 🔹 Safe function (error handle)
+const PYTHON_API_URL = process.env.PYTHON_API_URL;
+
+const analyzeFrame = async (frame) => {
+  if (!PYTHON_API_URL) {
+    console.error("PYTHON_API_URL is not set. Python integration cannot be reached.");
+    return null;
+  }
+
+  try {
+    const response = await fetch(`${PYTHON_API_URL}/analyze`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ frame }),
+    });
+
+    return await response.json();
+  } catch (error) {
+    console.error("Python API error:", error.message);
+    return null;
+  }
+};
+
 const router = express.Router();
+
+console.log("Python URL:", process.env.PYTHON_API_URL);
 
 function getExamWindow(exam) {
   const examDate = new Date(exam.examDate);

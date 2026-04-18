@@ -13,6 +13,8 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import axios from "axios";
 
+const PYTHON_SERVER = import.meta.env.VITE_PYTHON_SERVER || 'http://127.0.0.1:8000';
+
 type Exam = {
   _id: string;
   title: string;
@@ -164,7 +166,7 @@ const TeacherDashboard = () => {
   const handleRunAST = async (responseId: string, code: string) => {
     setAnalyzingCodeId(responseId);
     try {
-      const res = await axios.post("http://localhost:8000/analyze_code", { code });
+      const res = await axios.post(`${PYTHON_SERVER}/analyze_code`, { code });
       setAstResults(prev => ({ ...prev, [responseId]: res.data }));
       toast({
         title: "AST Analysis Complete",

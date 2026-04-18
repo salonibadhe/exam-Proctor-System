@@ -70,7 +70,7 @@ export type ViolationType =
 
 type ViolationLog = Record<ViolationType, number>;
 
-const PYTHON_SERVER = 'http://127.0.0.1:8000';
+const PYTHON_SERVER = import.meta.env.VITE_PYTHON_SERVER || 'http://127.0.0.1:8000';
 const FRAME_INTERVAL_MS = 5000; // Analyze a frame every 5 seconds
 const VIDEO_READY_STATE_CURRENT_DATA = 2;
 
